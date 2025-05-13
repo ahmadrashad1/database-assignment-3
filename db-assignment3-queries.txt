@@ -1,0 +1,168 @@
+CREATE DATABASE assignment03;
+USE assignment03;
+
+CREATE TABLE library_books (
+    book_id FLOAT PRIMARY KEY,
+    title NVARCHAR(255),
+    author NVARCHAR(255),
+    availability NVARCHAR(255)
+);
+
+CREATE TABLE library_members (
+    member_id FLOAT PRIMARY KEY,
+    full_name NVARCHAR(255),
+    email NVARCHAR(255),
+    join_date DATETIME
+);
+
+CREATE TABLE borrow_transactions (
+    transaction_id FLOAT PRIMARY KEY,
+    member_id FLOAT,
+    book_id FLOAT,
+    borrow_date DATETIME,
+    due_date DATETIME,
+    FOREIGN KEY (member_id) REFERENCES library_members(member_id),
+    FOREIGN KEY (book_id) REFERENCES library_books(book_id)
+);
+
+CREATE TABLE activity_logs (
+    log_id UNIQUEIDENTIFIER DEFAULT NEWID() PRIMARY KEY,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    action NVARCHAR(255),
+    table_name NVARCHAR(255),
+    record_id FLOAT,
+    details NVARCHAR(255)
+);
+
+sp_configure 'show advanced options', 1;
+GO
+RECONFIGURE;
+GO
+sp_configure 'Ad Hoc Distributed Queries', 1;
+GO
+RECONFIGURE;
+GO
+
+SELECT * FROM activity_logs;
+SELECT * FROM library_books;
+SELECT * FROM borrow_transactions;
+SELECT * FROM library_members;
+
+CREATE TRIGGER borrow_insert_trigger
+ON borrow_transactions
+AFTER INSERT
+AS
+BEGIN
+    DECLARE @transaction_id FLOAT, @member_id FLOAT, @book_id FLOAT, @borrow_date DATETIME, @due_date DATETIME;
+
+    SELECT @transaction_id = transaction_id, @member_id = member_id, @book_id = book_id, 
+           @borrow_date = borrow_date, @due_date = due_date
+    FROM inserted;
+
+    INSERT INTO activity_logs (log_id, action, table_name, record_id, details)
+    VALUES (NEWID(), 'INSERT', 'borrow_transactions', @transaction_id, 'New borrow transaction created');
+END;
+
+CREATE TRIGGER book_insert_trigger
+ON library_books
+AFTER INSERT
+AS
+BEGIN
+    DECLARE @book_id FLOAT, @title NVARCHAR(255), @author NVARCHAR(255), @availability NVARCHAR(255);
+
+    SELECT @book_id = book_id, @title = title, @author = author, 
+           @availability = availability
+    FROM inserted;
+
+    INSERT INTO activity_logs (action, table_name, record_id, details)
+    VALUES ('INSERT', 'library_books', @book_id, 'New book added');
+END;
+
+CREATE TRIGGER member_insert_trigger
+ON library_members
+AFTER INSERT
+AS
+BEGIN
+    DECLARE @member_id FLOAT, @full_name NVARCHAR(255), @email NVARCHAR(255), @join_date DATETIME;
+
+    SELECT @member_id = member_id, @full_name = full_name, @email = email, 
+           @join_date = join_date
+    FROM inserted;
+
+    INSERT INTO activity_logs (action, table_name, record_id, details)
+    VALUES ('INSERT', 'library_members', @member_id, 'New member added');
+END;
+
+CREATE TRIGGER borrow_delete_trigger
+ON borrow_transactions
+AFTER DELETE
+AS
+BEGIN
+    DECLARE @transaction_id FLOAT, @member_id FLOAT, @book_id FLOAT;
+
+    SELECT @transaction_id = transaction_id, @member_id = member_id, @book_id = book_id
+    FROM deleted;
+
+    INSERT INTO activity_logs (action, table_name, record_id, details)
+    VALUES ('DELETE', 'borrow_transactions', @transaction_id, 
+            CONCAT('Transaction ID ', @transaction_id, 
+                   ' (Member ID: ', @member_id, ', Book ID: ', @book_id, ') was deleted.'));
+END;
+
+CREATE TRIGGER book_update_trigger
+ON library_books
+AFTER UPDATE
+AS
+BEGIN
+    DECLARE @book_id FLOAT, @old_availability NVARCHAR(255), @new_availability NVARCHAR(255);
+
+    SELECT 
+        @book_id = i.book_id, 
+        @old_availability = d.availability, 
+        @new_availability = i.availability
+    FROM 
+        deleted d
+    INNER JOIN 
+        inserted i ON d.book_id = i.book_id;
+
+    INSERT INTO activity_logs (action, table_name, record_id, details)
+    VALUES ('UPDATE', 'library_books', @book_id, 
+            CONCAT('Book ID ', @book_id, 
+                   ' updated. Availability changed from "', @old_availability, '" to "', @new_availability, '".'));
+END;
+
+INSERT INTO library_members (member_id, full_name, email, join_date)
+VALUES (20, 'Ahmed Rashad', 'i221175@nu.edu.pk', GETDATE());
+
+INSERT INTO borrow_transactions (transaction_id, member_id, book_id, borrow_date, due_date)
+VALUES (1, 20, 301, GETDATE(), DATEADD(DAY, 14, GETDATE()));
+
+INSERT INTO borrow_transactions (transaction_id, member_id, book_id, borrow_date, due_date)
+VALUES (2, 20, 302, GETDATE(), DATEADD(DAY, 14, GETDATE()));
+
+UPDATE library_books
+SET availability = 'Not Available'
+WHERE book_id = 306;
+
+SELECT * FROM activity_logs;
+
+SELECT 
+    b.member_id,
+    m.full_name,
+    bk.title AS book_title,
+    b.borrow_date,
+    b.due_date,
+    bk.availability,
+    a.timestamp
+FROM 
+    borrow_transactions b
+JOIN 
+    library_members m ON b.member_id = m.member_id
+JOIN 
+    library_books bk ON b.book_id = bk.book_id
+JOIN 
+    activity_logs a ON a.record_id = b.transaction_id
+WHERE 
+    b.member_id = 20;
+
+SELECT * FROM borrow_transactions;
